@@ -26,6 +26,13 @@
             investimentos: []
         };
 
+        // Estado para controlar a ordenação de cada tabela
+        const sortState = {
+            receitas: { column: 'created_at', direction: 'desc' },
+            despesas: { column: 'created_at', direction: 'desc' },
+            investimentos: { column: 'created_at', direction: 'desc' },
+        };
+
         function initializeSupabase() {
             try {
                 // Tenta criar o cliente Supabase. Se as chaves não forem válidas, a conexão não funcionará.
@@ -148,6 +155,41 @@
             applyFiltersAndRender(collectionName);
         };
 
+        // Função para ordenar a tabela
+        window.sortTable = (collectionName, column) => {
+            const state = sortState[collectionName];
+            if (state.column === column) {
+                state.direction = state.direction === 'asc' ? 'desc' : 'asc';
+            } else {
+                state.column = column;
+                state.direction = 'asc';
+            }
+
+            const sortedItems = [...appData[collectionName]].sort((a, b) => {
+                let aValue = a[column];
+                let bValue = b[column];
+
+                if (column === 'created_at') {
+                    aValue = new Date(aValue);
+                    bValue = new Date(bValue);
+                } else if (column === 'descricao' || column === 'tipo') {
+                    aValue = aValue.toLowerCase();
+                    bValue = bValue.toLowerCase();
+                }
+
+                if (aValue < bValue) {
+                    return state.direction === 'asc' ? -1 : 1;
+                }
+                if (aValue > bValue) {
+                    return state.direction === 'asc' ? 1 : -1;
+                }
+                return 0;
+            });
+            
+            renderTable(collectionName, sortedItems);
+        };
+
+
         async function fetchDataAndRenderAllTables() {
             const collections = ['receitas', 'despesas', 'investimentos'];
             const mes = document.getElementById('mes-filtro').value;
@@ -213,7 +255,29 @@
                 return descricaoMatch && tipoMatch && valorMatch && dateMatch;
             });
 
-            renderTable(collectionName, filteredItems);
+            const sortedItems = [...filteredItems].sort((a, b) => {
+                const state = sortState[collectionName];
+                let aValue = a[state.column];
+                let bValue = b[state.column];
+
+                if (state.column === 'created_at') {
+                    aValue = new Date(aValue);
+                    bValue = new Date(bValue);
+                } else if (state.column === 'descricao' || state.column === 'tipo') {
+                    aValue = aValue.toLowerCase();
+                    bValue = bValue.toLowerCase();
+                }
+
+                if (aValue < bValue) {
+                    return state.direction === 'asc' ? -1 : 1;
+                }
+                if (aValue > bValue) {
+                    return state.direction === 'asc' ? 1 : -1;
+                }
+                return 0;
+            });
+
+            renderTable(collectionName, sortedItems);
         }
 
         function getFilters(collectionName) {
@@ -550,10 +614,18 @@
                     <table class="min-w-full">
                         <thead class="sticky top-0 bg-white">
                             <tr>
-                                <th class="p-2 text-left text-sm font-semibold text-gray-600">Descrição</th>
-                                <th class="p-2 text-left text-sm font-semibold text-gray-600">Tipo</th>
-                                <th class="p-2 text-left text-sm font-semibold text-gray-600">Data</th>
-                                <th class="p-2 text-right text-sm font-semibold text-gray-600">Valor</th>
+                                <th class="p-2 text-left text-sm font-semibold text-gray-600 cursor-pointer" onclick="sortTable('receitas', 'descricao')">Descrição
+                                    <span class="sort-icon ml-1" id="sort-receitas-descricao"></span>
+                                </th>
+                                <th class="p-2 text-left text-sm font-semibold text-gray-600 cursor-pointer" onclick="sortTable('receitas', 'tipo')">Tipo
+                                    <span class="sort-icon ml-1" id="sort-receitas-tipo"></span>
+                                </th>
+                                <th class="p-2 text-left text-sm font-semibold text-gray-600 cursor-pointer" onclick="sortTable('receitas', 'created_at')">Data
+                                    <span class="sort-icon ml-1" id="sort-receitas-created_at"></span>
+                                </th>
+                                <th class="p-2 text-right text-sm font-semibold text-gray-600 cursor-pointer" onclick="sortTable('receitas', 'valor')">Valor
+                                    <span class="sort-icon ml-1" id="sort-receitas-valor"></span>
+                                </th>
                                 <th class="p-2 text-center text-sm font-semibold text-gray-600">Ações</th>
                             </tr>
                         </thead>
@@ -593,9 +665,15 @@
                     <table class="min-w-full">
                         <thead class="sticky top-0 bg-white">
                             <tr>
-                                <th class="p-2 text-left text-sm font-semibold text-gray-600">Descrição</th>
-                                <th class="p-2 text-left text-sm font-semibold text-gray-600">Data</th>
-                                <th class="p-2 text-right text-sm font-semibold text-gray-600">Valor</th>
+                                <th class="p-2 text-left text-sm font-semibold text-gray-600 cursor-pointer" onclick="sortTable('despesas', 'descricao')">Descrição
+                                    <span class="sort-icon ml-1" id="sort-despesas-descricao"></span>
+                                </th>
+                                <th class="p-2 text-left text-sm font-semibold text-gray-600 cursor-pointer" onclick="sortTable('despesas', 'created_at')">Data
+                                    <span class="sort-icon ml-1" id="sort-despesas-created_at"></span>
+                                </th>
+                                <th class="p-2 text-right text-sm font-semibold text-gray-600 cursor-pointer" onclick="sortTable('despesas', 'valor')">Valor
+                                    <span class="sort-icon ml-1" id="sort-despesas-valor"></span>
+                                </th>
                                 <th class="p-2 text-center text-sm font-semibold text-gray-600">Ações</th>
                             </tr>
                         </thead>
@@ -636,10 +714,18 @@
                     <table class="min-w-full">
                         <thead class="sticky top-0 bg-white">
                             <tr>
-                                <th class="p-2 text-left text-sm font-semibold text-gray-600">Descrição</th>
-                                <th class="p-2 text-left text-sm font-semibold text-gray-600">Qtd. Cotas</th>
-                                <th class="p-2 text-left text-sm font-semibold text-gray-600">Data</th>
-                                <th class="p-2 text-right text-sm font-semibold text-gray-600">Valor Total</th>
+                                <th class="p-2 text-left text-sm font-semibold text-gray-600 cursor-pointer" onclick="sortTable('investimentos', 'descricao')">Descrição
+                                    <span class="sort-icon ml-1" id="sort-investimentos-descricao"></span>
+                                </th>
+                                <th class="p-2 text-left text-sm font-semibold text-gray-600 cursor-pointer" onclick="sortTable('investimentos', 'quantidade')">Qtd. Cotas
+                                    <span class="sort-icon ml-1" id="sort-investimentos-quantidade"></span>
+                                </th>
+                                <th class="p-2 text-left text-sm font-semibold text-gray-600 cursor-pointer" onclick="sortTable('investimentos', 'created_at')">Data
+                                    <span class="sort-icon ml-1" id="sort-investimentos-created_at"></span>
+                                </th>
+                                <th class="p-2 text-right text-sm font-semibold text-gray-600 cursor-pointer" onclick="sortTable('investimentos', 'valor')">Valor Total
+                                    <span class="sort-icon ml-1" id="sort-investimentos-valor"></span>
+                                </th>
                                 <th class="p-2 text-center text-sm font-semibold text-gray-600">Ações</th>
                             </tr>
                         </thead>
