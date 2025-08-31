@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Controle Financeiro</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+        import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+        // SUBSTITUA ESTES VALORES COM OS SEUS DADOS DO SUPABASE
+        const SUPABASE_URL = 'https://aroqdeuadpxypzgmfgld.supabase.co';
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFyb3FkZXVhZHB4eXB6Z21mZ2xkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTY0ODg5MjUsImV4cCI6MjA3MjA2NDkyNX0.v3bt4YuCgzk2Y2f3uXZqsTvVzNbFHPbJUFd49F3W4NE';
+
+        let supabase;
+        // O nome da tabela agora é fixo, sem o appId, conforme solicitado.
+        const tableNames = {
+            receitas: 'receitas',
+            despesas: 'despesas',
+            investimentos: 'investimentos'
+        };
+
+        function initializeSupabase() {
+            try {
+                // Tenta criar o cliente Supabase. Se as chaves não forem válidas, a conexão não funcionará.
+                if (SUPABASE_URL === 'SUA_URL_DO_SUPABASE' || SUPABASE_ANON_KEY === 'SUA_CHAVE_ANONIMA') {
+                    console.error("Por favor, substitua a URL e a chave do Supabase no código.");
+                    showMessage("Erro: URL ou chave do Supabase inválida. Verifique o código.", 'error');
+                    return;
+                }
+                supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+                startApp();
+            } catch (error) {
+                console.error("Erro ao inicializar o Supabase:", error);
+                showMessage("Erro ao conectar com o Supabase. Verifique o console.", 'error');
+            }
+        }
+        
+        async function startApp() {
+            document.getElementById('loading').classList.add('hidden');
+            document.getElementById('app-container').classList.remove('hidden');
+            
+            // Define o filtro inicial para o mês e ano atuais
+            const today = new Date();
+            document.getElementById('mes-filtro').value = today.getMonth() + 1;
+            document.getElementById('ano-filtro').value = today.getFullYear();
+            
+            setupFilterListener();
+            await checkAndAddPreviousMonthBalance();
+            fetchDataAndRenderAllTables();
+            setupFormListeners();
+        }
+        
+        async function checkAndAddPreviousMonthBalance() {
+            const today = new Date();
+            const mesAtual = today.getMonth() + 1;
+            const anoAtual = today.getFullYear();
+
+            // Verifica se é o primeiro dia do mês
+            if (today.getDate() !== 1) {
+                return;
+            }
+
+            // Calcula o mês e ano anteriores
+            let mesAnterior = mesAtual === 1 ? 12 : mesAtual - 1;
+            let anoAnterior = mesAtual === 1 ? anoAtual - 1 : anoAtual;
+            const startDateAnterior = new Date(anoAnterior, mesAnterior - 1, 1).toISOString();
+            const endDateAnterior = new Date(anoAnterior, mesAnterior, 0, 23, 59, 59).toISOString();
+
+            // Verifica se o Saldo anterior já foi adicionado para o mês atual
+            const { data: saldoExistente, error: checkError } = await supabase
+                .from(tableNames.receitas)
+                .select('id')
+                .eq('tipo', 'Saldo anterior')
+                .gte('created_at', new Date(anoAtual, mesAtual - 1, 1).toISOString())
+                .lt('created_at', new Date(anoAtual, mesAtual, 0, 23, 59, 59).toISOString());
+
+            if (checkError) {
+                console.error('Erro ao verificar saldo anterior:', checkError);
+                return;
+            }
+
+            if (saldoExistente.length > 0) {
+                // O saldo anterior já existe, não faz nada
+                return;
+            }
+
+            // Busca os dados do mês anterior
+            const { data: receitasAnterior } = await fetchData('receitas', startDateAnterior, endDateAnterior);
+            const { data: despesasAnterior } = await fetchData('despesas', startDateAnterior, endDateAnterior);
+            const { data: investimentosAnterior } = await fetchData('investimentos', startDateAnterior, endDateAnterior);
+            
+            // Calcula o saldo do mês anterior
+            const totalReceitasAnterior = receitasAnterior.reduce((sum, item) => sum + item.valor, 0);
+            const totalDespesasAnterior = despesasAnterior.reduce((sum, item) => sum + item.valor, 0);
+            const totalInvestimentosAnterior = investimentosAnterior.reduce((sum, item) => sum + item.valor, 0);
+            
+            const saldoFinalAnterior = totalReceitasAnterior - totalDespesasAnterior - totalInvestimentosAnterior;
+
+            // Insere o saldo final do mês anterior como uma nova receita
+            const { error: insertError } = await supabase.from(tableNames.receitas).insert({
+                descricao: 'Saldo do mês anterior',
+                valor: saldoFinalAnterior,
+                tipo: 'Saldo anterior'
+            });
+
+            if (insertError) {
+                console.error('Erro ao adicionar saldo anterior:', insertError);
+                showMessage('Erro ao adicionar saldo anterior. Tente novamente.', 'error');
+            } else {
+                showMessage('Saldo do mês anterior adicionado com sucesso!', 'success');
+            }
+        }
+
+        function setupFilterListener() {
+            const mesFiltro = document.getElementById('mes-filtro');
+            const anoFiltro = document.getElementById('ano-filtro');
+            
+            const handleFilterChange = () => {
+                fetchDataAndRenderAllTables();
+            };
+            
+            mesFiltro.addEventListener('change', handleFilterChange);
+            anoFiltro.addEventListener('input', handleFilterChange);
+        }
+
+        async function fetchDataAndRenderAllTables() {
+            const collections = ['receitas', 'despesas', 'investimentos'];
+            const mes = document.getElementById('mes-filtro').value;
+            const ano = document.getElementById('ano-filtro').value;
+            
+            const startDate = new Date(ano, mes - 1, 1).toISOString();
+            const endDate = new Date(ano, mes, 0, 23, 59, 59).toISOString();
+
+            for (const collectionName of collections) {
+                const { data, error } = await fetchData(collectionName, startDate, endDate);
+                if (error) {
+                    console.error(`Erro ao obter dados de ${collectionName}:`, error);
+                } else {
+                    renderTable(collectionName, data);
+                }
+            }
+        }
+
+        async function fetchData(collectionName, startDate, endDate) {
+            const tableName = tableNames[collectionName];
+            try {
+                const { data, error } = await supabase
+                    .from(tableName)
+                    .select('*')
+                    .gte('created_at', startDate)
+                    .lt('created_at', endDate)
+                    .order('created_at', { ascending: false });
+                
+                if (error) {
+                    throw error;
+                }
+                return { data, error: null };
+            } catch (error) {
+                console.error(`Erro ao buscar dados de ${tableName}:`, error);
+                return { data: null, error };
+            }
+        }
+
+        function setupFormListeners() {
+            const forms = ['form-receita', 'form-despesa', 'form-investimento'];
+            forms.forEach(formId => {
+                document.getElementById(formId).addEventListener('submit', handleFormSubmit);
+            });
+        }
+        
+        // As funções handleEdit e handleDelete agora recebem a tabela e o ID
+        window.handleEdit = async (collectionName, id) => {
+            const form = document.getElementById(`form-${collectionName.slice(0, -1)}`);
+            const tableName = tableNames[collectionName];
+            
+            try {
+                const { data, error } = await supabase.from(tableName).select('*').eq('id', id).single();
+                if (error) {
+                    console.error('Erro ao buscar item para edição:', error);
+                    showMessage('Erro ao carregar item para edição.', 'error');
+                    return;
+                }
+                form.querySelector('[name="descricao"]').value = data.descricao;
+                if (collectionName === 'receitas') {
+                    form.querySelector('[name="valor"]').value = data.valor;
+                    form.querySelector('[name="tipo"]').value = data.tipo;
+                } else if (collectionName === 'investimentos') {
+                    // Para investimentos, o valor é o total, então precisamos recalcular o valor por cota
+                    // e preencher a quantidade
+                    form.querySelector('[name="valor"]').value = data.valor;
+                    form.querySelector('[name="quantidade"]').value = data.quantidade;
+                } else {
+                    form.querySelector('[name="valor"]').value = data.valor;
+                }
+                
+                form.dataset.itemId = id;
+                form.querySelector('button[type="submit"]').textContent = 'Salvar Edição';
+            } catch (error) {
+                console.error('Erro ao buscar item para edição:', error);
+                showMessage('Erro ao carregar item para edição.', 'error');
+            }
+        };
+        
+        window.handleDelete = async (collectionName, id) => {
+             const customAlert = document.getElementById('custom-alert');
+             const confirmBtn = document.getElementById('confirm-delete');
+             const cancelBtn = document.getElementById('cancel-delete');
+
+             customAlert.classList.remove('hidden');
+             
+             confirmBtn.onclick = async () => {
+                customAlert.classList.add('hidden');
+                const tableName = tableNames[collectionName];
+                try {
+                    const { error } = await supabase.from(tableName).delete().eq('id', id);
+                    if (error) {
+                        console.error('Erro ao deletar item:', error);
+                        showMessage('Erro ao excluir item. Tente novamente.', 'error');
+                        return;
+                    }
+                    showMessage('Item excluído com sucesso!', 'success');
+                    fetchDataAndRenderAllTables(); // Atualiza os dados
+                } catch (error) {
+                    console.error('Erro ao deletar item:', error);
+                    showMessage('Erro ao excluir item. Tente novamente.', 'error');
+                }
+             };
+
+             cancelBtn.onclick = () => {
+                customAlert.classList.add('hidden');
+             };
+        };
+
+        async function handleFormSubmit(event) {
+            event.preventDefault();
+            const form = event.target;
+            const collectionName = form.dataset.collection;
+            const id = form.dataset.itemId;
+            const tableName = tableNames[collectionName];
+
+            const descricao = form.querySelector('[name="descricao"]').value;
+            const valor = parseFloat(form.querySelector('[name="valor"]').value);
+
+            if (!descricao || isNaN(valor)) {
+                showMessage('Por favor, preencha todos os campos.', 'error');
+                return;
+            }
+
+            let item = { descricao, valor };
+            
+            if (collectionName === 'receitas') {
+                const tipo = form.querySelector('[name="tipo"]').value;
+                item.tipo = tipo;
+            } else if (collectionName === 'investimentos') {
+                const quantidade = parseFloat(form.querySelector('[name="quantidade"]').value);
+                if (isNaN(quantidade) || quantidade <= 0) {
+                    showMessage('Por favor, informe uma quantidade de cotas válida.', 'error');
+                    return;
+                }
+                const valorPorCota = valor;
+                item = {
+                    descricao: descricao,
+                    valor: valorPorCota * quantidade,
+                    quantidade: quantidade
+                };
+            }
+
+            try {
+                if (id) {
+                    const { error } = await supabase.from(tableName).update(item).eq('id', id);
+                    if (error) throw error;
+                    showMessage('Item atualizado com sucesso!', 'success');
+                    form.removeAttribute('data-item-id');
+                    form.querySelector('button[type="submit"]').textContent = 'Adicionar';
+                } else {
+                    const { error } = await supabase.from(tableName).insert([item]);
+                    if (error) throw error;
+                    showMessage('Item adicionado com sucesso!', 'success');
+                }
+                form.reset();
+                fetchDataAndRenderAllTables(); // Atualiza os dados
+            } catch (error) {
+                console.error(`Erro ao salvar item em ${tableName}:`, error);
+                showMessage('Erro ao salvar item. Tente novamente.', 'error');
+            }
+        }
+
+        function renderTable(collectionName, items) {
+            const tableBody = document.getElementById(`table-${collectionName}-body`);
+            tableBody.innerHTML = '';
+            let total = 0;
+
+            items.forEach(item => {
+                total += item.valor;
+                const row = document.createElement('tr');
+                row.className = 'border-b';
+                
+                let cellsHtml = '';
+                if (collectionName === 'investimentos') {
+                    cellsHtml = `
+                        <td class="p-2">${item.descricao}</td>
+                        <td class="p-2 text-sm text-gray-500">${item.quantidade || 'N/A'}</td>
+                        <td class="p-2 text-sm text-gray-500">${new Date(item.created_at).toLocaleDateString()}</td>
+                        <td class="p-2 text-right">R$ ${item.valor.toFixed(2)}</td>
+                    `;
+                } else {
+                    cellsHtml = `
+                        <td class="p-2">${item.descricao}</td>
+                        ${collectionName === 'receitas' ? `<td class="p-2 text-sm text-gray-500">${item.tipo || 'N/A'}</td>` : ''}
+                        <td class="p-2 text-sm text-gray-500">${new Date(item.created_at).toLocaleDateString()}</td>
+                        <td class="p-2 text-right">R$ ${item.valor.toFixed(2)}</td>
+                    `;
+                }
+
+                row.innerHTML = `
+                    ${cellsHtml}
+                    <td class="p-2 text-center flex justify-center space-x-2">
+                        <button class="text-blue-500 hover:text-blue-700" onclick="handleEdit('${collectionName}', '${item.id}')">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zm-5.657 5.657l-1.414 1.414L3 13.586V16h2.414l5.657-5.657-2.828-2.828z" />
+                            </svg>
+                        </button>
+                        <button class="text-red-500 hover:text-red-700" onclick="handleDelete('${collectionName}', '${item.id}')">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd" />
+                            </svg>
+                        </button>
+                    </td>
+                `;
+                tableBody.appendChild(row);
+            });
+
+            document.getElementById(`total-${collectionName}`).textContent = `R$ ${total.toFixed(2)}`;
+            updateDashboard();
+        }
+
+        function updateDashboard() {
+            const totalReceitas = parseFloat(document.getElementById('total-receitas').textContent.replace('R$ ', ''));
+            const totalDespesas = parseFloat(document.getElementById('total-despesas').textContent.replace('R$ ', ''));
+            const totalInvestimentos = parseFloat(document.getElementById('total-investimentos').textContent.replace('R$ ', ''));
+
+            const saldo = totalReceitas - totalDespesas - totalInvestimentos;
+            const saldoElement = document.getElementById('saldo-final');
+            
+            saldoElement.textContent = `R$ ${saldo.toFixed(2)}`;
+            saldoElement.classList.remove('text-green-600', 'text-red-600');
+            saldoElement.classList.add(saldo >= 0 ? 'text-green-600' : 'text-red-600');
+        }
+        
+        function showMessage(message, type) {
+            const messageBox = document.getElementById('message-box');
+            messageBox.textContent = message;
+            messageBox.className = `fixed bottom-4 right-4 p-4 rounded-lg shadow-lg text-white ${type === 'success' ? 'bg-green-500' : 'bg-red-500'} transition-opacity duration-300`;
+            messageBox.classList.remove('opacity-0');
+            setTimeout(() => {
+                messageBox.classList.add('opacity-0');
+            }, 3000);
+        }
+
+        document.addEventListener('DOMContentLoaded', initializeSupabase);
+    </script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen p-4 sm:p-8">
+    
+    <div id="loading" class="flex justify-center items-center h-screen">
+        <div class="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-gray-900"></div>
+    </div>
+    
+    <div id="app-container" class="hidden">
+        <header class="text-center mb-8">
+            <h1 class="text-4xl sm:text-5xl font-extrabold text-gray-800">Controle Financeiro</h1>
+            <p class="mt-2 text-lg text-gray-600">Organize suas finanças com facilidade.</p>
+        </header>
+
+        <!-- Dashboard -->
+        <div class="bg-white p-6 rounded-2xl shadow-lg mb-8">
+            <!-- Filtro de Mês e Ano -->
+            <h2 class="text-2xl font-bold text-gray-700 mb-4">Filtrar por Período</h2>
+            <div class="flex flex-col sm:flex-row items-center space-y-4 sm:space-y-0 sm:space-x-4 mb-8">
+                <select id="mes-filtro" class="p-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-400">
+                    <option value="1">Janeiro</option>
+                    <option value="2">Fevereiro</option>
+                    <option value="3">Março</option>
+                    <option value="4">Abril</option>
+                    <option value="5">Maio</option>
+                    <option value="6">Junho</option>
+                    <option value="7">Julho</option>
+                    <option value="8">Agosto</option>
+                    <option value="9">Setembro</option>
+                    <option value="10">Outubro</option>
+                    <option value="11">Novembro</option>
+                    <option value="12">Dezembro</option>
+                </select>
+                <input type="number" id="ano-filtro" placeholder="Ano" class="p-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-400 w-32">
+            </div>
+
+            <h2 class="text-2xl font-bold text-gray-700 mb-4">Resumo do Mês</h2>
+            <div class="flex flex-col sm:flex-row justify-around text-center space-y-4 sm:space-y-0 sm:space-x-4">
+                <div class="p-4 bg-blue-100 rounded-xl flex-1">
+                    <p class="text-sm text-blue-700">Entradas</p>
+                    <p id="total-receitas" class="text-2xl font-bold text-blue-900">R$ 0,00</p>
+                </div>
+                <div class="p-4 bg-red-100 rounded-xl flex-1">
+                    <p class="text-sm text-red-700">Saídas</p>
+                    <p id="total-despesas" class="text-2xl font-bold text-red-900">R$ 0,00</p>
+                </div>
+                <div class="p-4 bg-purple-100 rounded-xl flex-1">
+                    <p class="text-sm text-purple-700">Investimentos</p>
+                    <p id="total-investimentos" class="text-2xl font-bold text-purple-900">R$ 0,00</p>
+                </div>
+                <div class="p-4 bg-green-100 rounded-xl flex-1">
+                    <p class="text-sm text-green-700">Saldo Final</p>
+                    <p id="saldo-final" class="text-2xl font-bold text-green-900">R$ 0,00</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sections -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            
+            <!-- Receitas (Entradas) Section -->
+            <div class="bg-white p-6 rounded-2xl shadow-lg">
+                <h2 class="text-2xl font-bold text-gray-700 mb-4">Entradas</h2>
+                <form id="form-receita" data-collection="receitas" class="mb-4">
+                    <div class="flex flex-col space-y-2">
+                        <input type="text" name="descricao" placeholder="Descrição" required class="p-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-400">
+                        <select name="tipo" required class="p-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-400">
+                            <option value="">Selecione o Tipo</option>
+                            <option value="Saldo anterior">Saldo anterior</option>
+                            <option value="1° Salario - 15">1° Salário - 15</option>
+                            <option value="2° Salário - 30">2° Salário - 30</option>
+                            <option value="Dividendos">Dividendos</option>
+                            <option value="Pix">Pix</option>
+                            <option value="Crédito">Crédito</option>
+                        </select>
+                        <input type="number" name="valor" placeholder="Valor (R$)" step="0.01" required class="p-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-400">
+                        <button type="submit" class="p-2 bg-blue-500 text-white rounded-xl font-semibold hover:bg-blue-600 transition-colors">Adicionar</button>
+                    </div>
+                </form>
+                <div class="max-h-64 overflow-y-auto">
+                    <table class="min-w-full">
+                        <thead class="sticky top-0 bg-white">
+                            <tr>
+                                <th class="p-2 text-left text-sm font-semibold text-gray-600">Descrição</th>
+                                <th class="p-2 text-left text-sm font-semibold text-gray-600">Tipo</th>
+                                <th class="p-2 text-left text-sm font-semibold text-gray-600">Data</th>
+                                <th class="p-2 text-right text-sm font-semibold text-gray-600">Valor</th>
+                                <th class="p-2 text-center text-sm font-semibold text-gray-600">Ações</th>
+                            </tr>
+                        </thead>
+                        <tbody id="table-receitas-body" class="divide-y divide-gray-200">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Despesas (Saídas) Section -->
+            <div class="bg-white p-6 rounded-2xl shadow-lg">
+                <h2 class="text-2xl font-bold text-gray-700 mb-4">Saídas</h2>
+                <form id="form-despesa" data-collection="despesas" class="mb-4">
+                    <div class="flex flex-col space-y-2">
+                        <input type="text" name="descricao" placeholder="Descrição" required class="p-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-red-400">
+                        <input type="number" name="valor" placeholder="Valor (R$)" step="0.01" required class="p-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-red-400">
+                        <button type="submit" class="p-2 bg-red-500 text-white rounded-xl font-semibold hover:bg-red-600 transition-colors">Adicionar</button>
+                    </div>
+                </form>
+                <div class="max-h-64 overflow-y-auto">
+                    <table class="min-w-full">
+                        <thead class="sticky top-0 bg-white">
+                            <tr>
+                                <th class="p-2 text-left text-sm font-semibold text-gray-600">Descrição</th>
+                                <th class="p-2 text-left text-sm font-semibold text-gray-600">Data</th>
+                                <th class="p-2 text-right text-sm font-semibold text-gray-600">Valor</th>
+                                <th class="p-2 text-center text-sm font-semibold text-gray-600">Ações</th>
+                            </tr>
+                        </thead>
+                        <tbody id="table-despesas-body" class="divide-y divide-gray-200">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Investimentos Section -->
+            <div class="bg-white p-6 rounded-2xl shadow-lg">
+                <h2 class="text-2xl font-bold text-gray-700 mb-4">Investimentos</h2>
+                <form id="form-investimento" data-collection="investimentos" class="mb-4">
+                    <div class="flex flex-col space-y-2">
+                        <input type="text" name="descricao" placeholder="Descrição" required class="p-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-purple-400">
+                        <input type="number" name="valor" placeholder="Valor por Cota (R$)" step="0.01" required class="p-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-purple-400">
+                        <input type="number" name="quantidade" placeholder="Quantidade de Cotas" value="1" step="0.01" min="0" required class="p-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-purple-400">
+                        <button type="submit" class="p-2 bg-purple-500 text-white rounded-xl font-semibold hover:bg-purple-600 transition-colors">Adicionar</button>
+                    </div>
+                </form>
+                <div class="max-h-64 overflow-y-auto">
+                    <table class="min-w-full">
+                        <thead class="sticky top-0 bg-white">
+                            <tr>
+                                <th class="p-2 text-left text-sm font-semibold text-gray-600">Descrição</th>
+                                <th class="p-2 text-left text-sm font-semibold text-gray-600">Qtd. Cotas</th>
+                                <th class="p-2 text-left text-sm font-semibold text-gray-600">Data</th>
+                                <th class="p-2 text-right text-sm font-semibold text-gray-600">Valor Total</th>
+                                <th class="p-2 text-center text-sm font-semibold text-gray-600">Ações</th>
+                            </tr>
+                        </thead>
+                        <tbody id="table-investimentos-body" class="divide-y divide-gray-200">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Caixa de Mensagem (Toast) -->
+    <div id="message-box" class="opacity-0"></div>
+
+    <!-- Modal de Confirmação de Exclusão (Substitui o alert/confirm) -->
+    <div id="custom-alert" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl p-6 shadow-xl text-center max-w-sm w-full">
+            <h3 class="text-lg font-bold mb-4">Confirmar Exclusão</h3>
+            <p class="mb-6">Tem certeza que deseja excluir este item? Esta ação não pode ser desfeita.</p>
+            <div class="flex justify-center space-x-4">
+                <button id="cancel-delete" class="px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 transition-colors">Cancelar</button>
+                <button id="confirm-delete" class="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors">Excluir</button>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
