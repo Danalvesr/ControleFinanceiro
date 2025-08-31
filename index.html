@@ -4,9 +4,21 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Controle Financeiro</title>
+    <link rel="manifest" href="config/manifest.json">
     <script src="https://cdn.tailwindcss.com"></script>
     <script type="module">
         import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+        // Registro do Service Worker
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('service-worker.js').then(registration => {
+                    console.log('Service Worker registrado com sucesso:', registration);
+                }).catch(err => {
+                    console.log('Falha ao registrar o Service Worker:', err);
+                });
+            });
+        }
 
         // SUBSTITUA ESTES VALORES COM OS SEUS DADOS DO SUPABASE
         const SUPABASE_URL = 'https://aroqdeuadpxypzgmfgld.supabase.co';
@@ -163,6 +175,16 @@
             } else {
                 state.column = column;
                 state.direction = 'asc';
+            }
+
+            // Atualiza os ícones de ordenação
+            document.querySelectorAll(`#table-${collectionName} thead th .sort-icon`).forEach(icon => {
+                icon.textContent = '';
+            });
+            const iconId = `sort-${collectionName}-${column}`;
+            const sortIcon = document.getElementById(iconId);
+            if (sortIcon) {
+                sortIcon.textContent = state.direction === 'asc' ? '▲' : '▼';
             }
 
             const sortedItems = [...appData[collectionName]].sort((a, b) => {
