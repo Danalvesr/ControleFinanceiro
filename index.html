@@ -20,6 +20,12 @@
             investimentos: 'investimentos'
         };
 
+        const appData = {
+            receitas: [],
+            despesas: [],
+            investimentos: []
+        };
+
         function initializeSupabase() {
             try {
                 // Tenta criar o cliente Supabase. Se as chaves não forem válidas, a conexão não funcionará.
@@ -47,7 +53,7 @@
             
             setupFilterListener();
             await checkAndAddPreviousMonthBalance();
-            fetchDataAndRenderAllTables();
+            await fetchDataAndRenderAllTables();
             setupFormListeners();
         }
         
@@ -64,8 +70,10 @@
             // Calcula o mês e ano anteriores
             let mesAnterior = mesAtual === 1 ? 12 : mesAtual - 1;
             let anoAnterior = mesAtual === 1 ? anoAtual - 1 : anoAtual;
+            
+            // Corrige o problema do fuso horário usando o primeiro dia do próximo mês como limite
             const startDateAnterior = new Date(anoAnterior, mesAnterior - 1, 1).toISOString();
-            const endDateAnterior = new Date(anoAnterior, mesAnterior, 0, 23, 59, 59).toISOString();
+            const endDateAnterior = new Date(anoAtual, mesAtual - 1, 1).toISOString();
 
             // Verifica se o Saldo anterior já foi adicionado para o mês atual
             const { data: saldoExistente, error: checkError } = await supabase
@@ -73,7 +81,7 @@
                 .select('id')
                 .eq('tipo', 'Saldo anterior')
                 .gte('created_at', new Date(anoAtual, mesAtual - 1, 1).toISOString())
-                .lt('created_at', new Date(anoAtual, mesAtual, 0, 23, 59, 59).toISOString());
+                .lt('created_at', new Date(anoAtual, mesAtual, 1).toISOString());
 
             if (checkError) {
                 console.error('Erro ao verificar saldo anterior:', checkError);
@@ -122,22 +130,41 @@
             
             mesFiltro.addEventListener('change', handleFilterChange);
             anoFiltro.addEventListener('input', handleFilterChange);
+
+            // Adiciona listeners para os filtros das tabelas
+            document.querySelectorAll('.filter-input').forEach(input => {
+                input.addEventListener('input', (event) => {
+                    const collectionName = event.target.dataset.collection;
+                    applyFiltersAndRender(collectionName);
+                });
+            });
         }
+        
+        // Função para resetar os filtros de uma tabela
+        window.resetFilters = (collectionName) => {
+            const form = document.getElementById(`filter-form-${collectionName}`);
+            form.querySelectorAll('input').forEach(input => input.value = '');
+            form.querySelectorAll('select').forEach(select => select.value = '');
+            applyFiltersAndRender(collectionName);
+        };
 
         async function fetchDataAndRenderAllTables() {
             const collections = ['receitas', 'despesas', 'investimentos'];
             const mes = document.getElementById('mes-filtro').value;
             const ano = document.getElementById('ano-filtro').value;
             
+            // Cria um objeto de data para o primeiro dia do mês e outro para o primeiro dia do próximo mês.
+            // Isso resolve o problema de fuso horário.
             const startDate = new Date(ano, mes - 1, 1).toISOString();
-            const endDate = new Date(ano, mes, 0, 23, 59, 59).toISOString();
+            const endDate = new Date(ano, mes, 1).toISOString();
 
             for (const collectionName of collections) {
                 const { data, error } = await fetchData(collectionName, startDate, endDate);
                 if (error) {
                     console.error(`Erro ao obter dados de ${collectionName}:`, error);
                 } else {
-                    renderTable(collectionName, data);
+                    appData[collectionName] = data; // Armazena os dados brutos
+                    applyFiltersAndRender(collectionName); // Renderiza com os filtros iniciais
                 }
             }
         }
@@ -160,6 +187,59 @@
                 console.error(`Erro ao buscar dados de ${tableName}:`, error);
                 return { data: null, error };
             }
+        }
+
+        function applyFiltersAndRender(collectionName) {
+            // Verifica se os dados estão carregados antes de aplicar o filtro
+            if (!appData[collectionName]) {
+                return;
+            }
+
+            const filters = getFilters(collectionName);
+            const filteredItems = appData[collectionName].filter(item => {
+                // Filtro por descrição (case-insensitive)
+                const descricaoMatch = item.descricao.toLowerCase().includes(filters.descricao.toLowerCase());
+
+                // Filtro por tipo (apenas para receitas)
+                const tipoMatch = collectionName !== 'receitas' || !filters.tipo || item.tipo === filters.tipo;
+
+                // Filtro por valor (min/max)
+                const valorMatch = item.valor >= filters.minValor && item.valor <= filters.maxValor;
+
+                // Filtro por data
+                const itemDate = new Date(item.created_at);
+                const dateMatch = !filters.data || itemDate.toLocaleDateString().includes(filters.data);
+
+                return descricaoMatch && tipoMatch && valorMatch && dateMatch;
+            });
+
+            renderTable(collectionName, filteredItems);
+        }
+
+        function getFilters(collectionName) {
+            const form = document.getElementById(`filter-form-${collectionName}`);
+            if (!form) {
+                return {
+                    descricao: '',
+                    tipo: '',
+                    minValor: 0,
+                    maxValor: Infinity,
+                    data: ''
+                };
+            }
+            
+            const filters = {
+                descricao: form.querySelector('[data-filter="descricao"]').value,
+                minValor: parseFloat(form.querySelector('[data-filter="min-valor"]').value) || 0,
+                maxValor: parseFloat(form.querySelector('[data-filter="max-valor"]').value) || Infinity,
+                data: form.querySelector('[data-filter="data"]').value
+            };
+
+            if (collectionName === 'receitas') {
+                filters.tipo = form.querySelector('[data-filter="tipo"]').value;
+            }
+
+            return filters;
         }
 
         function setupFormListeners() {
@@ -332,6 +412,7 @@
             });
 
             document.getElementById(`total-${collectionName}`).textContent = `R$ ${total.toFixed(2)}`;
+            document.getElementById(`count-${collectionName}`).textContent = `${items.length} itens`;
             updateDashboard();
         }
 
@@ -443,6 +524,28 @@
                         <button type="submit" class="p-2 bg-blue-500 text-white rounded-xl font-semibold hover:bg-blue-600 transition-colors">Adicionar</button>
                     </div>
                 </form>
+                
+                <!-- Filtros para Receitas -->
+                <div id="filter-form-receitas" class="bg-gray-50 p-4 rounded-xl mb-4">
+                    <p class="font-bold text-sm text-gray-700 mb-2">Filtros:</p>
+                    <div class="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                        <input type="text" data-filter="descricao" placeholder="Descrição" class="filter-input p-1 text-sm rounded border" data-collection="receitas">
+                        <select data-filter="tipo" class="filter-input p-1 text-sm rounded border" data-collection="receitas">
+                             <option value="">Todos Tipos</option>
+                             <option value="Saldo anterior">Saldo anterior</option>
+                             <option value="1° Salario - 15">1° Salário - 15</option>
+                             <option value="2° Salário - 30">2° Salário - 30</option>
+                             <option value="Dividendos">Dividendos</option>
+                             <option value="Pix">Pix</option>
+                             <option value="Crédito">Crédito</option>
+                        </select>
+                        <input type="text" data-filter="data" placeholder="dd/mm/aaaa" class="filter-input p-1 text-sm rounded border" data-collection="receitas">
+                        <input type="number" data-filter="min-valor" placeholder="Valor Mínimo" step="0.01" class="filter-input p-1 text-sm rounded border" data-collection="receitas">
+                        <input type="number" data-filter="max-valor" placeholder="Valor Máximo" step="0.01" class="filter-input p-1 text-sm rounded border" data-collection="receitas">
+                        <button onclick="resetFilters('receitas')" class="col-span-2 sm:col-span-3 p-1 bg-gray-200 text-gray-700 rounded-xl hover:bg-gray-300 text-sm">Limpar Filtros</button>
+                    </div>
+                </div>
+
                 <div class="max-h-64 overflow-y-auto">
                     <table class="min-w-full">
                         <thead class="sticky top-0 bg-white">
@@ -458,6 +561,9 @@
                         </tbody>
                     </table>
                 </div>
+                <div class="text-sm font-semibold text-gray-700 mt-2">
+                    <span id="count-receitas">0 itens</span>
+                </div>
             </div>
 
             <!-- Despesas (Saídas) Section -->
@@ -470,6 +576,19 @@
                         <button type="submit" class="p-2 bg-red-500 text-white rounded-xl font-semibold hover:bg-red-600 transition-colors">Adicionar</button>
                     </div>
                 </form>
+                
+                <!-- Filtros para Despesas -->
+                <div id="filter-form-despesas" class="bg-gray-50 p-4 rounded-xl mb-4">
+                    <p class="font-bold text-sm text-gray-700 mb-2">Filtros:</p>
+                    <div class="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                        <input type="text" data-filter="descricao" placeholder="Descrição" class="filter-input p-1 text-sm rounded border" data-collection="despesas">
+                        <input type="text" data-filter="data" placeholder="dd/mm/aaaa" class="filter-input p-1 text-sm rounded border" data-collection="despesas">
+                        <input type="number" data-filter="min-valor" placeholder="Valor Mínimo" step="0.01" class="filter-input p-1 text-sm rounded border" data-collection="despesas">
+                        <input type="number" data-filter="max-valor" placeholder="Valor Máximo" step="0.01" class="filter-input p-1 text-sm rounded border" data-collection="despesas">
+                        <button onclick="resetFilters('despesas')" class="col-span-2 sm:col-span-3 p-1 bg-gray-200 text-gray-700 rounded-xl hover:bg-gray-300 text-sm">Limpar Filtros</button>
+                    </div>
+                </div>
+
                 <div class="max-h-64 overflow-y-auto">
                     <table class="min-w-full">
                         <thead class="sticky top-0 bg-white">
@@ -484,6 +603,9 @@
                         </tbody>
                     </table>
                 </div>
+                <div class="text-sm font-semibold text-gray-700 mt-2">
+                    <span id="count-despesas">0 itens</span>
+                </div>
             </div>
 
             <!-- Investimentos Section -->
@@ -497,6 +619,19 @@
                         <button type="submit" class="p-2 bg-purple-500 text-white rounded-xl font-semibold hover:bg-purple-600 transition-colors">Adicionar</button>
                     </div>
                 </form>
+                
+                <!-- Filtros para Investimentos -->
+                <div id="filter-form-investimentos" class="bg-gray-50 p-4 rounded-xl mb-4">
+                    <p class="font-bold text-sm text-gray-700 mb-2">Filtros:</p>
+                    <div class="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                        <input type="text" data-filter="descricao" placeholder="Descrição" class="filter-input p-1 text-sm rounded border" data-collection="investimentos">
+                        <input type="text" data-filter="data" placeholder="dd/mm/aaaa" class="filter-input p-1 text-sm rounded border" data-collection="investimentos">
+                        <input type="number" data-filter="min-valor" placeholder="Valor Mínimo" step="0.01" class="filter-input p-1 text-sm rounded border" data-collection="investimentos">
+                        <input type="number" data-filter="max-valor" placeholder="Valor Máximo" step="0.01" class="filter-input p-1 text-sm rounded border" data-collection="investimentos">
+                        <button onclick="resetFilters('investimentos')" class="col-span-2 sm:col-span-3 p-1 bg-gray-200 text-gray-700 rounded-xl hover:bg-gray-300 text-sm">Limpar Filtros</button>
+                    </div>
+                </div>
+
                 <div class="max-h-64 overflow-y-auto">
                     <table class="min-w-full">
                         <thead class="sticky top-0 bg-white">
@@ -511,6 +646,9 @@
                         <tbody id="table-investimentos-body" class="divide-y divide-gray-200">
                         </tbody>
                     </table>
+                </div>
+                <div class="text-sm font-semibold text-gray-700 mt-2">
+                    <span id="count-investimentos">0 itens</span>
                 </div>
             </div>
         </div>
