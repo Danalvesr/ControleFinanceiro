@@ -1,12 +1,10 @@
 self.addEventListener('install', (event) => {
     event.waitUntil(
-        caches.open('index-cache').then((cache) => {
+        caches.open('financeiro-cache-v1').then((cache) => {
             return cache.addAll([
-                '/',
-                '/index.html',
-                '/manifest.json',
-                'https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4',
-                'https://esm.sh/@supabase/supabase-js@2'
+                './',
+                './index.html',
+                './manifest.json'
             ]);
         })
     );
