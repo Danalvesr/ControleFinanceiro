@@ -38,12 +38,12 @@
             despesas: [],
             investimentos: []
         };
+        let allRecords = [];
 
         // Estado para controlar a ordenação de cada tabela
         const sortState = {
-            receitas: { column: 'created_at', direction: 'desc' },
-            despesas: { column: 'created_at', direction: 'desc' },
-            investimentos: { column: 'created_at', direction: 'desc' },
+            column: 'created_at', 
+            direction: 'desc'
         };
 
         function initializeSupabase() {
@@ -151,66 +151,90 @@
             mesFiltro.addEventListener('change', handleFilterChange);
             anoFiltro.addEventListener('input', handleFilterChange);
 
-            // Adiciona listeners para os filtros das tabelas
-            document.querySelectorAll('.filter-input').forEach(input => {
-                input.addEventListener('input', (event) => {
-                    const collectionName = event.target.dataset.collection;
-                    applyFiltersAndRender(collectionName);
-                });
+            // Adiciona listeners para os filtros da tabela unificada
+            const registrosView = document.getElementById('registros-view');
+            registrosView.querySelectorAll('.filter-input').forEach(input => {
+                input.addEventListener('input', applyUnifiedFilters);
+            });
+            registrosView.querySelector('#tipo-registro').addEventListener('change', applyUnifiedFilters);
+            registrosView.querySelector('#reset-unified-filters').addEventListener('click', () => {
+                document.getElementById('tipo-registro').value = '';
+                document.getElementById('filtro-descricao').value = '';
+                document.getElementById('filtro-min-valor').value = '';
+                document.getElementById('filtro-max-valor').value = '';
+                document.getElementById('filtro-data').value = '';
+                applyUnifiedFilters();
             });
         }
         
-        // Função para resetar os filtros de uma tabela
-        window.resetFilters = (collectionName) => {
-            const form = document.getElementById(`filter-form-${collectionName}`);
-            form.querySelectorAll('input').forEach(input => input.value = '');
-            form.querySelectorAll('select').forEach(select => select.value = '');
-            applyFiltersAndRender(collectionName);
-        };
+        // Função para aplicar os filtros na tabela unificada
+        window.applyUnifiedFilters = () => {
+            const tipoRegistro = document.getElementById('tipo-registro').value;
+            const filtroDescricao = document.getElementById('filtro-descricao').value.toLowerCase();
+            const filtroMinValor = parseFloat(document.getElementById('filtro-min-valor').value) || 0;
+            const filtroMaxValor = parseFloat(document.getElementById('filtro-max-valor').value) || Infinity;
+            const filtroData = document.getElementById('filtro-data').value;
+            
+            let filteredRecords = allRecords;
 
-        // Função para ordenar a tabela
-        window.sortTable = (collectionName, column) => {
-            const state = sortState[collectionName];
-            if (state.column === column) {
-                state.direction = state.direction === 'asc' ? 'desc' : 'asc';
-            } else {
-                state.column = column;
-                state.direction = 'asc';
+            if (tipoRegistro) {
+                filteredRecords = filteredRecords.filter(item => item.collectionName === tipoRegistro);
             }
 
+            filteredRecords = filteredRecords.filter(item => {
+                const descricaoMatch = item.descricao.toLowerCase().includes(filtroDescricao);
+                const valorMatch = item.valor >= filtroMinValor && item.valor <= filtroMaxValor;
+                const dateMatch = !filtroData || new Date(item.created_at).toLocaleDateString().includes(filtroData);
+                
+                return descricaoMatch && valorMatch && dateMatch;
+            });
+
+            renderUnifiedTable(sortedItems(filteredRecords));
+        };
+        
+        // Função para ordenar a tabela unificada
+        window.sortTable = (column) => {
+            if (sortState.column === column) {
+                sortState.direction = sortState.direction === 'asc' ? 'desc' : 'asc';
+            } else {
+                sortState.column = column;
+                sortState.direction = 'asc';
+            }
+            
             // Atualiza os ícones de ordenação
-            document.querySelectorAll(`#table-${collectionName} thead th .sort-icon`).forEach(icon => {
+            document.querySelectorAll('#unified-table thead th .sort-icon').forEach(icon => {
                 icon.textContent = '';
             });
-            const iconId = `sort-${collectionName}-${column}`;
-            const sortIcon = document.getElementById(iconId);
+            const sortIcon = document.getElementById(`sort-icon-${column}`);
             if (sortIcon) {
-                sortIcon.textContent = state.direction === 'asc' ? '▲' : '▼';
+                sortIcon.textContent = sortState.direction === 'asc' ? '▲' : '▼';
             }
+            
+            applyUnifiedFilters();
+        };
 
-            const sortedItems = [...appData[collectionName]].sort((a, b) => {
-                let aValue = a[column];
-                let bValue = b[column];
+        function sortedItems(items) {
+            return [...items].sort((a, b) => {
+                let aValue = a[sortState.column];
+                let bValue = b[sortState.column];
 
-                if (column === 'created_at') {
+                if (sortState.column === 'created_at') {
                     aValue = new Date(aValue);
                     bValue = new Date(bValue);
-                } else if (column === 'descricao' || column === 'tipo') {
+                } else if (sortState.column === 'descricao') {
                     aValue = aValue.toLowerCase();
                     bValue = bValue.toLowerCase();
                 }
 
                 if (aValue < bValue) {
-                    return state.direction === 'asc' ? -1 : 1;
+                    return sortState.direction === 'asc' ? -1 : 1;
                 }
                 if (aValue > bValue) {
-                    return state.direction === 'asc' ? 1 : -1;
+                    return sortState.direction === 'asc' ? 1 : -1;
                 }
                 return 0;
             });
-            
-            renderTable(collectionName, sortedItems);
-        };
+        }
 
 
         async function fetchDataAndRenderAllTables() {
@@ -218,20 +242,25 @@
             const mes = document.getElementById('mes-filtro').value;
             const ano = document.getElementById('ano-filtro').value;
             
-            // Cria um objeto de data para o primeiro dia do mês e outro para o primeiro dia do próximo mês.
-            // Isso resolve o problema de fuso horário.
             const startDate = new Date(ano, mes - 1, 1).toISOString();
             const endDate = new Date(ano, mes, 1).toISOString();
+            
+            let allData = [];
 
             for (const collectionName of collections) {
                 const { data, error } = await fetchData(collectionName, startDate, endDate);
                 if (error) {
                     console.error(`Erro ao obter dados de ${collectionName}:`, error);
                 } else {
-                    appData[collectionName] = data; // Armazena os dados brutos
-                    applyFiltersAndRender(collectionName); // Renderiza com os filtros iniciais
+                    appData[collectionName] = data;
+                    data.forEach(item => allData.push({ ...item, collectionName }));
                 }
             }
+            allRecords = allData;
+            
+            // Renderiza o dashboard e a tabela unificada
+            updateDashboard();
+            applyUnifiedFilters();
         }
 
         async function fetchData(collectionName, startDate, endDate) {
@@ -254,91 +283,97 @@
             }
         }
 
-        function applyFiltersAndRender(collectionName) {
-            // Verifica se os dados estão carregados antes de aplicar o filtro
-            if (!appData[collectionName]) {
-                return;
-            }
-
-            const filters = getFilters(collectionName);
-            const filteredItems = appData[collectionName].filter(item => {
-                // Filtro por descrição (case-insensitive)
-                const descricaoMatch = item.descricao.toLowerCase().includes(filters.descricao.toLowerCase());
-
-                // Filtro por tipo (apenas para receitas)
-                const tipoMatch = collectionName !== 'receitas' || !filters.tipo || item.tipo === filters.tipo;
-
-                // Filtro por valor (min/max)
-                const valorMatch = item.valor >= filters.minValor && item.valor <= filters.maxValor;
-
-                // Filtro por data
-                const itemDate = new Date(item.created_at);
-                const dateMatch = !filters.data || itemDate.toLocaleDateString().includes(filters.data);
-
-                return descricaoMatch && tipoMatch && valorMatch && dateMatch;
-            });
-
-            const sortedItems = [...filteredItems].sort((a, b) => {
-                const state = sortState[collectionName];
-                let aValue = a[state.column];
-                let bValue = b[state.column];
-
-                if (state.column === 'created_at') {
-                    aValue = new Date(aValue);
-                    bValue = new Date(bValue);
-                } else if (state.column === 'descricao' || state.column === 'tipo') {
-                    aValue = aValue.toLowerCase();
-                    bValue = bValue.toLowerCase();
-                }
-
-                if (aValue < bValue) {
-                    return state.direction === 'asc' ? -1 : 1;
-                }
-                if (aValue > bValue) {
-                    return state.direction === 'asc' ? 1 : -1;
-                }
-                return 0;
-            });
-
-            renderTable(collectionName, sortedItems);
-        }
-
-        function getFilters(collectionName) {
-            const form = document.getElementById(`filter-form-${collectionName}`);
-            if (!form) {
-                return {
-                    descricao: '',
-                    tipo: '',
-                    minValor: 0,
-                    maxValor: Infinity,
-                    data: ''
-                };
-            }
+        function renderUnifiedTable(items) {
+            const tableBody = document.getElementById('unified-table-body');
+            tableBody.innerHTML = '';
             
-            const filters = {
-                descricao: form.querySelector('[data-filter="descricao"]').value,
-                minValor: parseFloat(form.querySelector('[data-filter="min-valor"]').value) || 0,
-                maxValor: parseFloat(form.querySelector('[data-filter="max-valor"]').value) || Infinity,
-                data: form.querySelector('[data-filter="data"]').value
-            };
+            items.forEach(item => {
+                const row = document.createElement('tr');
+                row.className = 'border-b';
+                
+                let tipo = '';
+                let valorCota = '';
+                let cor = '';
 
-            if (collectionName === 'receitas') {
-                filters.tipo = form.querySelector('[data-filter="tipo"]').value;
-            }
-
-            return filters;
+                switch(item.collectionName) {
+                    case 'receitas':
+                        tipo = item.tipo || 'N/A';
+                        cor = 'text-blue-500';
+                        break;
+                    case 'despesas':
+                        tipo = 'Saída';
+                        cor = 'text-red-500';
+                        break;
+                    case 'investimentos':
+                        tipo = 'Investimento';
+                        valorCota = `(${item.quantidade || 0} cotas)`;
+                        cor = 'text-purple-500';
+                        break;
+                }
+                
+                row.innerHTML = `
+                    <td class="p-2">${item.descricao}</td>
+                    <td class="p-2 text-sm text-gray-500 ${cor}">${tipo} ${valorCota}</td>
+                    <td class="p-2 text-sm text-gray-500">${new Date(item.created_at).toLocaleDateString()}</td>
+                    <td class="p-2 text-right ${cor}">R$ ${item.valor.toFixed(2)}</td>
+                    <td class="p-2 text-center flex justify-center space-x-2">
+                        <button class="text-blue-500 hover:text-blue-700" onclick="handleEdit('${item.collectionName}', '${item.id}')">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zm-5.657 5.657l-1.414 1.414L3 13.586V16h2.414l5.657-5.657-2.828-2.828z" />
+                            </svg>
+                        </button>
+                        <button class="text-red-500 hover:text-red-700" onclick="handleDelete('${item.collectionName}', '${item.id}')">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd" />
+                            </svg>
+                        </button>
+                    </td>
+                `;
+                tableBody.appendChild(row);
+            });
+            document.getElementById('count-registros').textContent = `${items.length} itens`;
         }
+
 
         function setupFormListeners() {
-            const forms = ['form-receita', 'form-despesa', 'form-investimento'];
-            forms.forEach(formId => {
-                document.getElementById(formId).addEventListener('submit', handleFormSubmit);
-            });
+            document.getElementById('form-dinamico').addEventListener('submit', handleFormSubmit);
         }
         
+        window.updateDynamicForm = (tipoInsercao) => {
+            const form = document.getElementById('form-dinamico');
+            const valorInput = document.getElementById('valor-dinamico');
+            const quantidadeInput = document.getElementById('quantidade-dinamico');
+            const tipoReceitaSelect = document.getElementById('tipo-receita');
+            
+            // Remove a seleção de todos os botões e adiciona ao selecionado
+            document.querySelectorAll('.btn-insercao').forEach(btn => {
+                btn.classList.remove('bg-gray-300');
+                btn.classList.add('bg-gray-200');
+            });
+            document.getElementById(`btn-${tipoInsercao}`).classList.remove('bg-gray-200');
+            document.getElementById(`btn-${tipoInsercao}`).classList.add('bg-gray-300');
+
+
+            // Resetar campos para evitar dados de formulário anteriores
+            valorInput.placeholder = 'Valor (R$)';
+            quantidadeInput.classList.add('hidden');
+            tipoReceitaSelect.classList.add('hidden');
+
+            // Ajustar o formulário com base no tipo de inserção
+            if (tipoInsercao === 'receitas') {
+                tipoReceitaSelect.classList.remove('hidden');
+            } else if (tipoInsercao === 'investimentos') {
+                quantidadeInput.classList.remove('hidden');
+                valorInput.placeholder = 'Valor por Cota (R$)';
+            }
+            
+            // Atualizar o nome da coleção no dataset do formulário para o submit
+            form.dataset.collection = tipoInsercao;
+        };
+
         // As funções handleEdit e handleDelete agora recebem a tabela e o ID
         window.handleEdit = async (collectionName, id) => {
-            const form = document.getElementById(`form-${collectionName.slice(0, -1)}`);
+            const form = document.getElementById('form-dinamico');
             const tableName = tableNames[collectionName];
             
             try {
@@ -348,17 +383,18 @@
                     showMessage('Erro ao carregar item para edição.', 'error');
                     return;
                 }
-                form.querySelector('[name="descricao"]').value = data.descricao;
+                
+                window.updateDynamicForm(collectionName);
+
+                document.getElementById('descricao-dinamico').value = data.descricao;
                 if (collectionName === 'receitas') {
-                    form.querySelector('[name="valor"]').value = data.valor;
-                    form.querySelector('[name="tipo"]').value = data.tipo;
+                    document.getElementById('valor-dinamico').value = data.valor;
+                    document.getElementById('tipo-receita').value = data.tipo;
                 } else if (collectionName === 'investimentos') {
-                    // Para investimentos, o valor é o total, então precisamos recalcular o valor por cota
-                    // e preencher a quantidade
-                    form.querySelector('[name="valor"]').value = data.valor;
-                    form.querySelector('[name="quantidade"]').value = data.quantidade;
-                } else {
-                    form.querySelector('[name="valor"]').value = data.valor;
+                    document.getElementById('valor-dinamico').value = data.valor / data.quantidade;
+                    document.getElementById('quantidade-dinamico').value = data.quantidade;
+                } else { // Despesas
+                    document.getElementById('valor-dinamico').value = data.valor;
                 }
                 
                 form.dataset.itemId = id;
@@ -406,8 +442,9 @@
             const id = form.dataset.itemId;
             const tableName = tableNames[collectionName];
 
-            const descricao = form.querySelector('[name="descricao"]').value;
-            const valor = parseFloat(form.querySelector('[name="valor"]').value);
+            const descricao = document.getElementById('descricao-dinamico').value;
+            const valorInput = document.getElementById('valor-dinamico');
+            const valor = parseFloat(valorInput.value);
 
             if (!descricao || isNaN(valor)) {
                 showMessage('Por favor, preencha todos os campos.', 'error');
@@ -417,10 +454,10 @@
             let item = { descricao, valor };
             
             if (collectionName === 'receitas') {
-                const tipo = form.querySelector('[name="tipo"]').value;
+                const tipo = document.getElementById('tipo-receita').value;
                 item.tipo = tipo;
             } else if (collectionName === 'investimentos') {
-                const quantidade = parseFloat(form.querySelector('[name="quantidade"]').value);
+                const quantidade = parseFloat(document.getElementById('quantidade-dinamico').value);
                 if (isNaN(quantidade) || quantidade <= 0) {
                     showMessage('Por favor, informe uma quantidade de cotas válida.', 'error');
                     return;
@@ -446,6 +483,7 @@
                     showMessage('Item adicionado com sucesso!', 'success');
                 }
                 form.reset();
+                window.updateDynamicForm('receitas');
                 fetchDataAndRenderAllTables(); // Atualiza os dados
             } catch (error) {
                 console.error(`Erro ao salvar item em ${tableName}:`, error);
@@ -454,59 +492,23 @@
         }
 
         function renderTable(collectionName, items) {
-            const tableBody = document.getElementById(`table-${collectionName}-body`);
-            tableBody.innerHTML = '';
             let total = 0;
-
             items.forEach(item => {
                 total += item.valor;
-                const row = document.createElement('tr');
-                row.className = 'border-b';
-                
-                let cellsHtml = '';
-                if (collectionName === 'investimentos') {
-                    cellsHtml = `
-                        <td class="p-2">${item.descricao}</td>
-                        <td class="p-2 text-sm text-gray-500">${item.quantidade || 'N/A'}</td>
-                        <td class="p-2 text-sm text-gray-500">${new Date(item.created_at).toLocaleDateString()}</td>
-                        <td class="p-2 text-right">R$ ${item.valor.toFixed(2)}</td>
-                    `;
-                } else {
-                    cellsHtml = `
-                        <td class="p-2">${item.descricao}</td>
-                        ${collectionName === 'receitas' ? `<td class="p-2 text-sm text-gray-500">${item.tipo || 'N/A'}</td>` : ''}
-                        <td class="p-2 text-sm text-gray-500">${new Date(item.created_at).toLocaleDateString()}</td>
-                        <td class="p-2 text-right">R$ ${item.valor.toFixed(2)}</td>
-                    `;
-                }
-
-                row.innerHTML = `
-                    ${cellsHtml}
-                    <td class="p-2 text-center flex justify-center space-x-2">
-                        <button class="text-blue-500 hover:text-blue-700" onclick="handleEdit('${collectionName}', '${item.id}')">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                                <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zm-5.657 5.657l-1.414 1.414L3 13.586V16h2.414l5.657-5.657-2.828-2.828z" />
-                            </svg>
-                        </button>
-                        <button class="text-red-500 hover:text-red-700" onclick="handleDelete('${collectionName}', '${item.id}')">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                                <path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd" />
-                            </svg>
-                        </button>
-                    </td>
-                `;
-                tableBody.appendChild(row);
             });
 
             document.getElementById(`total-${collectionName}`).textContent = `R$ ${total.toFixed(2)}`;
-            document.getElementById(`count-${collectionName}`).textContent = `${items.length} itens`;
             updateDashboard();
         }
 
         function updateDashboard() {
-            const totalReceitas = parseFloat(document.getElementById('total-receitas').textContent.replace('R$ ', ''));
-            const totalDespesas = parseFloat(document.getElementById('total-despesas').textContent.replace('R$ ', ''));
-            const totalInvestimentos = parseFloat(document.getElementById('total-investimentos').textContent.replace('R$ ', ''));
+            const totalReceitas = appData.receitas.reduce((sum, item) => sum + item.valor, 0);
+            const totalDespesas = appData.despesas.reduce((sum, item) => sum + item.valor, 0);
+            const totalInvestimentos = appData.investimentos.reduce((sum, item) => sum + item.valor, 0);
+
+            document.getElementById('total-receitas').textContent = `R$ ${totalReceitas.toFixed(2)}`;
+            document.getElementById('total-despesas').textContent = `R$ ${totalDespesas.toFixed(2)}`;
+            document.getElementById('total-investimentos').textContent = `R$ ${totalInvestimentos.toFixed(2)}`;
 
             const saldo = totalReceitas - totalDespesas - totalInvestimentos;
             const saldoElement = document.getElementById('saldo-final');
@@ -526,7 +528,27 @@
             }, 3000);
         }
 
-        document.addEventListener('DOMContentLoaded', initializeSupabase);
+        // NOVO: Função para alternar entre as visualizações
+        window.toggleView = () => {
+            const formsView = document.getElementById('forms-view');
+            const registrosView = document.getElementById('registros-view');
+            const toggleBtn = document.getElementById('toggle-view-btn');
+
+            if (registrosView.classList.contains('hidden')) {
+                formsView.classList.add('hidden');
+                registrosView.classList.remove('hidden');
+                toggleBtn.textContent = 'Voltar ao Resumo';
+            } else {
+                formsView.classList.remove('hidden');
+                registrosView.classList.add('hidden');
+                toggleBtn.textContent = 'Ver Registros';
+            }
+        };
+
+        document.addEventListener('DOMContentLoaded', () => {
+            initializeSupabase();
+            window.updateDynamicForm('receitas');
+        });
     </script>
     <style>
         body {
@@ -546,9 +568,8 @@
             <p class="mt-2 text-lg text-gray-600">Organize suas finanças com facilidade.</p>
         </header>
 
-        <!-- Dashboard -->
+        <!-- Filtro de Mês e Ano -->
         <div class="bg-white p-6 rounded-2xl shadow-lg mb-8">
-            <!-- Filtro de Mês e Ano -->
             <h2 class="text-2xl font-bold text-gray-700 mb-4">Filtrar por Período</h2>
             <div class="flex flex-col sm:flex-row items-center space-y-4 sm:space-y-0 sm:space-x-4 mb-8">
                 <select id="mes-filtro" class="p-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-400">
@@ -568,38 +589,67 @@
                 <input type="number" id="ano-filtro" placeholder="Ano" class="p-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-400 w-32">
             </div>
 
-            <h2 class="text-2xl font-bold text-gray-700 mb-4">Resumo do Mês</h2>
-            <div class="flex flex-col sm:flex-row justify-around text-center space-y-4 sm:space-y-0 sm:space-x-4">
-                <div class="p-4 bg-blue-100 rounded-xl flex-1">
-                    <p class="text-sm text-blue-700">Entradas</p>
-                    <p id="total-receitas" class="text-2xl font-bold text-blue-900">R$ 0,00</p>
+            <!-- Resumo do Mês -->
+            <div class="bg-white p-6 rounded-2xl shadow-lg mb-8">
+                <h2 class="text-2xl font-bold text-gray-700 mb-4">Resumo do Mês</h2>
+                <div class="flex flex-col sm:flex-row justify-around text-center space-y-4 sm:space-y-0 sm:space-x-4">
+                    <div class="p-4 bg-blue-100 rounded-xl flex-1">
+                        <p class="text-sm text-blue-700">Entradas</p>
+                        <p id="total-receitas" class="text-2xl font-bold text-blue-900">R$ 0,00</p>
+                    </div>
+                    <div class="p-4 bg-red-100 rounded-xl flex-1">
+                        <p class="text-sm text-red-700">Saídas</p>
+                        <p id="total-despesas" class="text-2xl font-bold text-red-900">R$ 0,00</p>
+                    </div>
+                    <div class="p-4 bg-purple-100 rounded-xl flex-1">
+                        <p class="text-sm text-purple-700">Investimentos</p>
+                        <p id="total-investimentos" class="text-2xl font-bold text-purple-900">R$ 0,00</p>
+                    </div>
+                    <div class="p-4 bg-green-100 rounded-xl flex-1">
+                        <p class="text-sm text-green-700">Saldo Final</p>
+                        <p id="saldo-final" class="text-2xl font-bold text-green-900">R$ 0,00</p>
+                    </div>
                 </div>
-                <div class="p-4 bg-red-100 rounded-xl flex-1">
-                    <p class="text-sm text-red-700">Saídas</p>
-                    <p id="total-despesas" class="text-2xl font-bold text-red-900">R$ 0,00</p>
-                </div>
-                <div class="p-4 bg-purple-100 rounded-xl flex-1">
-                    <p class="text-sm text-purple-700">Investimentos</p>
-                    <p id="total-investimentos" class="text-2xl font-bold text-purple-900">R$ 0,00</p>
-                </div>
-                <div class="p-4 bg-green-100 rounded-xl flex-1">
-                    <p class="text-sm text-green-700">Saldo Final</p>
-                    <p id="saldo-final" class="text-2xl font-bold text-green-900">R$ 0,00</p>
-                </div>
+            </div>
+
+            <!-- Botão de Alternância -->
+            <div class="mt-4 text-center">
+                <button id="toggle-view-btn" onclick="toggleView()" class="p-2 rounded-xl bg-gray-200 text-gray-700 font-semibold hover:bg-gray-300 transition-colors">Ver Registros</button>
             </div>
         </div>
 
-        <!-- Sections -->
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-            
-            <!-- Receitas (Entradas) Section -->
-            <div class="bg-white p-6 rounded-2xl shadow-lg">
-                <h2 class="text-2xl font-bold text-gray-700 mb-4">Entradas</h2>
-                <form id="form-receita" data-collection="receitas" class="mb-4">
+        <!-- Forms View -->
+        <div id="forms-view" class="">
+            <!-- Formulário Dinâmico -->
+            <div class="bg-white p-6 rounded-2xl shadow-lg mb-8">
+                <h2 class="text-2xl font-bold text-gray-700 mb-4">Adicionar Item</h2>
+                <!-- Botões de seleção de tipo -->
+                <div class="flex justify-around mb-4">
+                    <button id="btn-receitas" class="btn-insercao p-4 rounded-xl flex-1 mx-1 text-center bg-gray-200 hover:bg-gray-300 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400" onclick="updateDynamicForm('receitas')">
+                        <svg class="h-8 w-8 text-blue-500 mx-auto" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M12 4V20M4 12H20" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                        <p class="text-sm mt-1">Entrada</p>
+                    </button>
+                    <button id="btn-despesas" class="btn-insercao p-4 rounded-xl flex-1 mx-1 text-center bg-gray-200 hover:bg-gray-300 transition-colors focus:outline-none focus:ring-2 focus:ring-red-400" onclick="updateDynamicForm('despesas')">
+                        <svg class="h-8 w-8 text-red-500 mx-auto" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M6 12H18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                        <p class="text-sm mt-1">Saída</p>
+                    </button>
+                    <button id="btn-investimentos" class="btn-insercao p-4 rounded-xl flex-1 mx-1 text-center bg-gray-200 hover:bg-gray-300 transition-colors focus:outline-none focus:ring-2 focus:ring-purple-400" onclick="updateDynamicForm('investimentos')">
+                        <svg class="h-8 w-8 text-purple-500 mx-auto" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M12 2L2 12L12 22L22 12L12 2ZM12 16L6 12L12 8L18 12L12 16Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                        <p class="text-sm mt-1">Investimento</p>
+                    </button>
+                </div>
+                
+                <form id="form-dinamico" data-collection="receitas">
                     <div class="flex flex-col space-y-2">
-                        <input type="text" name="descricao" placeholder="Descrição" required class="p-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-400">
-                        <select name="tipo" required class="p-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-400">
-                            <option value="">Selecione o Tipo</option>
+                        <input type="text" id="descricao-dinamico" placeholder="Descrição" required class="p-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-400">
+                        <select id="tipo-receita" required class="hidden p-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-400">
+                            <option value="">Selecione o Tipo da Entrada</option>
                             <option value="Saldo anterior">Saldo anterior</option>
                             <option value="1° Salario - 15">1° Salário - 15</option>
                             <option value="2° Salário - 30">2° Salário - 30</option>
@@ -607,157 +657,58 @@
                             <option value="Pix">Pix</option>
                             <option value="Crédito">Crédito</option>
                         </select>
-                        <input type="number" name="valor" placeholder="Valor (R$)" step="0.01" required class="p-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-400">
+                        <input type="number" id="valor-dinamico" placeholder="Valor (R$)" step="0.01" required class="p-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-400">
+                        <input type="number" id="quantidade-dinamico" placeholder="Quantidade de Cotas" value="1" step="0.01" min="0" required class="hidden p-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-400">
                         <button type="submit" class="p-2 bg-blue-500 text-white rounded-xl font-semibold hover:bg-blue-600 transition-colors">Adicionar</button>
                     </div>
                 </form>
-                
-                <!-- Filtros para Receitas -->
-                <div id="filter-form-receitas" class="bg-gray-50 p-4 rounded-xl mb-4">
+            </div>
+        </div>
+
+        <!-- REGISTROS VIEW (Hidden by default) -->
+        <div id="registros-view" class="hidden">
+            <!-- Tabela de Registros Unificada -->
+            <div class="bg-white p-6 rounded-2xl shadow-lg">
+                <h2 class="2xl font-bold text-gray-700 mb-4">Registros do Mês</h2>
+                <div id="filter-form-unified" class="bg-gray-50 p-4 rounded-xl mb-4">
                     <p class="font-bold text-sm text-gray-700 mb-2">Filtros:</p>
                     <div class="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                        <input type="text" data-filter="descricao" placeholder="Descrição" class="filter-input p-1 text-sm rounded border" data-collection="receitas">
-                        <select data-filter="tipo" class="filter-input p-1 text-sm rounded border" data-collection="receitas">
-                             <option value="">Todos Tipos</option>
-                             <option value="Saldo anterior">Saldo anterior</option>
-                             <option value="1° Salario - 15">1° Salário - 15</option>
-                             <option value="2° Salário - 30">2° Salário - 30</option>
-                             <option value="Dividendos">Dividendos</option>
-                             <option value="Pix">Pix</option>
-                             <option value="Crédito">Crédito</option>
+                        <select id="tipo-registro" class="p-1 text-sm rounded border" data-collection="unified">
+                            <option value="">Todos os Registros</option>
+                            <option value="receitas">Entradas</option>
+                            <option value="despesas">Saídas</option>
+                            <option value="investimentos">Investimentos</option>
                         </select>
-                        <input type="text" data-filter="data" placeholder="dd/mm/aaaa" class="filter-input p-1 text-sm rounded border" data-collection="receitas">
-                        <input type="number" data-filter="min-valor" placeholder="Valor Mínimo" step="0.01" class="filter-input p-1 text-sm rounded border" data-collection="receitas">
-                        <input type="number" data-filter="max-valor" placeholder="Valor Máximo" step="0.01" class="filter-input p-1 text-sm rounded border" data-collection="receitas">
-                        <button onclick="resetFilters('receitas')" class="col-span-2 sm:col-span-3 p-1 bg-gray-200 text-gray-700 rounded-xl hover:bg-gray-300 text-sm">Limpar Filtros</button>
+                        <input type="text" id="filtro-descricao" data-filter="descricao" placeholder="Descrição" class="filter-input p-1 text-sm rounded border" data-collection="unified">
+                        <input type="text" id="filtro-data" data-filter="data" placeholder="dd/mm/aaaa" class="filter-input p-1 text-sm rounded border" data-collection="unified">
+                        <input type="number" id="filtro-min-valor" data-filter="min-valor" placeholder="Valor Mínimo" step="0.01" class="filter-input p-1 text-sm rounded border" data-collection="unified">
+                        <input type="number" id="filtro-max-valor" data-filter="max-valor" placeholder="Valor Máximo" step="0.01" class="filter-input p-1 text-sm rounded border" data-collection="unified">
+                        <button id="reset-unified-filters" class="col-span-2 sm:col-span-3 p-1 bg-gray-200 text-gray-700 rounded-xl hover:bg-gray-300 text-sm">Limpar Filtros</button>
                     </div>
                 </div>
-
-                <div class="max-h-64 overflow-y-auto">
-                    <table class="min-w-full">
+                <div class="max-h-96 overflow-y-auto">
+                    <table class="min-w-full" id="unified-table">
                         <thead class="sticky top-0 bg-white">
                             <tr>
-                                <th class="p-2 text-left text-sm font-semibold text-gray-600 cursor-pointer" onclick="sortTable('receitas', 'descricao')">Descrição
-                                    <span class="sort-icon ml-1" id="sort-receitas-descricao"></span>
+                                <th class="p-2 text-left text-sm font-semibold text-gray-600 cursor-pointer" onclick="sortTable('descricao')">Descrição
+                                    <span class="sort-icon ml-1" id="sort-icon-descricao"></span>
                                 </th>
-                                <th class="p-2 text-left text-sm font-semibold text-gray-600 cursor-pointer" onclick="sortTable('receitas', 'tipo')">Tipo
-                                    <span class="sort-icon ml-1" id="sort-receitas-tipo"></span>
+                                <th class="p-2 text-left text-sm font-semibold text-gray-600">Tipo</th>
+                                <th class="p-2 text-left text-sm font-semibold text-gray-600 cursor-pointer" onclick="sortTable('created_at')">Data
+                                    <span class="sort-icon ml-1" id="sort-icon-created_at"></span>
                                 </th>
-                                <th class="p-2 text-left text-sm font-semibold text-gray-600 cursor-pointer" onclick="sortTable('receitas', 'created_at')">Data
-                                    <span class="sort-icon ml-1" id="sort-receitas-created_at"></span>
-                                </th>
-                                <th class="p-2 text-right text-sm font-semibold text-gray-600 cursor-pointer" onclick="sortTable('receitas', 'valor')">Valor
-                                    <span class="sort-icon ml-1" id="sort-receitas-valor"></span>
+                                <th class="p-2 text-right text-sm font-semibold text-gray-600 cursor-pointer" onclick="sortTable('valor')">Valor
+                                    <span class="sort-icon ml-1" id="sort-icon-valor"></span>
                                 </th>
                                 <th class="p-2 text-center text-sm font-semibold text-gray-600">Ações</th>
                             </tr>
                         </thead>
-                        <tbody id="table-receitas-body" class="divide-y divide-gray-200">
+                        <tbody id="unified-table-body" class="divide-y divide-gray-200">
                         </tbody>
                     </table>
                 </div>
                 <div class="text-sm font-semibold text-gray-700 mt-2">
-                    <span id="count-receitas">0 itens</span>
-                </div>
-            </div>
-
-            <!-- Despesas (Saídas) Section -->
-            <div class="bg-white p-6 rounded-2xl shadow-lg">
-                <h2 class="text-2xl font-bold text-gray-700 mb-4">Saídas</h2>
-                <form id="form-despesa" data-collection="despesas" class="mb-4">
-                    <div class="flex flex-col space-y-2">
-                        <input type="text" name="descricao" placeholder="Descrição" required class="p-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-red-400">
-                        <input type="number" name="valor" placeholder="Valor (R$)" step="0.01" required class="p-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-red-400">
-                        <button type="submit" class="p-2 bg-red-500 text-white rounded-xl font-semibold hover:bg-red-600 transition-colors">Adicionar</button>
-                    </div>
-                </form>
-                
-                <!-- Filtros para Despesas -->
-                <div id="filter-form-despesas" class="bg-gray-50 p-4 rounded-xl mb-4">
-                    <p class="font-bold text-sm text-gray-700 mb-2">Filtros:</p>
-                    <div class="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                        <input type="text" data-filter="descricao" placeholder="Descrição" class="filter-input p-1 text-sm rounded border" data-collection="despesas">
-                        <input type="text" data-filter="data" placeholder="dd/mm/aaaa" class="filter-input p-1 text-sm rounded border" data-collection="despesas">
-                        <input type="number" data-filter="min-valor" placeholder="Valor Mínimo" step="0.01" class="filter-input p-1 text-sm rounded border" data-collection="despesas">
-                        <input type="number" data-filter="max-valor" placeholder="Valor Máximo" step="0.01" class="filter-input p-1 text-sm rounded border" data-collection="despesas">
-                        <button onclick="resetFilters('despesas')" class="col-span-2 sm:col-span-3 p-1 bg-gray-200 text-gray-700 rounded-xl hover:bg-gray-300 text-sm">Limpar Filtros</button>
-                    </div>
-                </div>
-
-                <div class="max-h-64 overflow-y-auto">
-                    <table class="min-w-full">
-                        <thead class="sticky top-0 bg-white">
-                            <tr>
-                                <th class="p-2 text-left text-sm font-semibold text-gray-600 cursor-pointer" onclick="sortTable('despesas', 'descricao')">Descrição
-                                    <span class="sort-icon ml-1" id="sort-despesas-descricao"></span>
-                                </th>
-                                <th class="p-2 text-left text-sm font-semibold text-gray-600 cursor-pointer" onclick="sortTable('despesas', 'created_at')">Data
-                                    <span class="sort-icon ml-1" id="sort-despesas-created_at"></span>
-                                </th>
-                                <th class="p-2 text-right text-sm font-semibold text-gray-600 cursor-pointer" onclick="sortTable('despesas', 'valor')">Valor
-                                    <span class="sort-icon ml-1" id="sort-despesas-valor"></span>
-                                </th>
-                                <th class="p-2 text-center text-sm font-semibold text-gray-600">Ações</th>
-                            </tr>
-                        </thead>
-                        <tbody id="table-despesas-body" class="divide-y divide-gray-200">
-                        </tbody>
-                    </table>
-                </div>
-                <div class="text-sm font-semibold text-gray-700 mt-2">
-                    <span id="count-despesas">0 itens</span>
-                </div>
-            </div>
-
-            <!-- Investimentos Section -->
-            <div class="bg-white p-6 rounded-2xl shadow-lg">
-                <h2 class="text-2xl font-bold text-gray-700 mb-4">Investimentos</h2>
-                <form id="form-investimento" data-collection="investimentos" class="mb-4">
-                    <div class="flex flex-col space-y-2">
-                        <input type="text" name="descricao" placeholder="Descrição" required class="p-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-purple-400">
-                        <input type="number" name="valor" placeholder="Valor por Cota (R$)" step="0.01" required class="p-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-purple-400">
-                        <input type="number" name="quantidade" placeholder="Quantidade de Cotas" value="1" step="0.01" min="0" required class="p-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-purple-400">
-                        <button type="submit" class="p-2 bg-purple-500 text-white rounded-xl font-semibold hover:bg-purple-600 transition-colors">Adicionar</button>
-                    </div>
-                </form>
-                
-                <!-- Filtros para Investimentos -->
-                <div id="filter-form-investimentos" class="bg-gray-50 p-4 rounded-xl mb-4">
-                    <p class="font-bold text-sm text-gray-700 mb-2">Filtros:</p>
-                    <div class="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                        <input type="text" data-filter="descricao" placeholder="Descrição" class="filter-input p-1 text-sm rounded border" data-collection="investimentos">
-                        <input type="text" data-filter="data" placeholder="dd/mm/aaaa" class="filter-input p-1 text-sm rounded border" data-collection="investimentos">
-                        <input type="number" data-filter="min-valor" placeholder="Valor Mínimo" step="0.01" class="filter-input p-1 text-sm rounded border" data-collection="investimentos">
-                        <input type="number" data-filter="max-valor" placeholder="Valor Máximo" step="0.01" class="filter-input p-1 text-sm rounded border" data-collection="investimentos">
-                        <button onclick="resetFilters('investimentos')" class="col-span-2 sm:col-span-3 p-1 bg-gray-200 text-gray-700 rounded-xl hover:bg-gray-300 text-sm">Limpar Filtros</button>
-                    </div>
-                </div>
-
-                <div class="max-h-64 overflow-y-auto">
-                    <table class="min-w-full">
-                        <thead class="sticky top-0 bg-white">
-                            <tr>
-                                <th class="p-2 text-left text-sm font-semibold text-gray-600 cursor-pointer" onclick="sortTable('investimentos', 'descricao')">Descrição
-                                    <span class="sort-icon ml-1" id="sort-investimentos-descricao"></span>
-                                </th>
-                                <th class="p-2 text-left text-sm font-semibold text-gray-600 cursor-pointer" onclick="sortTable('investimentos', 'quantidade')">Qtd. Cotas
-                                    <span class="sort-icon ml-1" id="sort-investimentos-quantidade"></span>
-                                </th>
-                                <th class="p-2 text-left text-sm font-semibold text-gray-600 cursor-pointer" onclick="sortTable('investimentos', 'created_at')">Data
-                                    <span class="sort-icon ml-1" id="sort-investimentos-created_at"></span>
-                                </th>
-                                <th class="p-2 text-right text-sm font-semibold text-gray-600 cursor-pointer" onclick="sortTable('investimentos', 'valor')">Valor Total
-                                    <span class="sort-icon ml-1" id="sort-investimentos-valor"></span>
-                                </th>
-                                <th class="p-2 text-center text-sm font-semibold text-gray-600">Ações</th>
-                            </tr>
-                        </thead>
-                        <tbody id="table-investimentos-body" class="divide-y divide-gray-200">
-                        </tbody>
-                    </table>
-                </div>
-                <div class="text-sm font-semibold text-gray-700 mt-2">
-                    <span id="count-investimentos">0 itens</span>
+                    <span id="count-registros">0 itens</span>
                 </div>
             </div>
         </div>
