@@ -445,16 +445,25 @@
             const descricao = document.getElementById('descricao-dinamico').value;
             const valorInput = document.getElementById('valor-dinamico');
             const valor = parseFloat(valorInput.value);
+            const tipoReceitaSelect = document.getElementById('tipo-receita');
 
+            if (collectionName === 'receitas' && tipoReceitaSelect.value === '') {
+                showMessage('Por favor, selecione um tipo de entrada.', 'error');
+                return;
+            }
             if (!descricao || isNaN(valor)) {
                 showMessage('Por favor, preencha todos os campos.', 'error');
                 return;
+            }
+            if (valor < 0) {
+                 showMessage('O valor não pode ser negativo.', 'error');
+                 return;
             }
 
             let item = { descricao, valor };
             
             if (collectionName === 'receitas') {
-                const tipo = document.getElementById('tipo-receita').value;
+                const tipo = tipoReceitaSelect.value;
                 item.tipo = tipo;
             } else if (collectionName === 'investimentos') {
                 const quantidade = parseFloat(document.getElementById('quantidade-dinamico').value);
@@ -648,7 +657,7 @@
                 <form id="form-dinamico" data-collection="receitas">
                     <div class="flex flex-col space-y-2">
                         <input type="text" id="descricao-dinamico" placeholder="Descrição" required class="p-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-400">
-                        <select id="tipo-receita" required class="hidden p-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-400">
+                        <select id="tipo-receita" class="hidden p-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-400">
                             <option value="">Selecione o Tipo da Entrada</option>
                             <option value="Saldo anterior">Saldo anterior</option>
                             <option value="1° Salario - 15">1° Salário - 15</option>
