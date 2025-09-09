@@ -153,15 +153,14 @@
 
             // Adiciona listeners para os filtros da tabela unificada
             const registrosView = document.getElementById('registros-view');
-            registrosView.querySelectorAll('.filter-input').forEach(input => {
-                input.addEventListener('input', applyUnifiedFilters);
-            });
+            
             registrosView.querySelector('#tipo-registro').addEventListener('change', applyUnifiedFilters);
+            registrosView.querySelector('#filtro-descricao').addEventListener('input', applyUnifiedFilters);
+            registrosView.querySelector('#filtro-data').addEventListener('input', applyUnifiedFilters);
+
             registrosView.querySelector('#reset-unified-filters').addEventListener('click', () => {
                 document.getElementById('tipo-registro').value = '';
                 document.getElementById('filtro-descricao').value = '';
-                document.getElementById('filtro-min-valor').value = '';
-                document.getElementById('filtro-max-valor').value = '';
                 document.getElementById('filtro-data').value = '';
                 applyUnifiedFilters();
             });
@@ -171,8 +170,6 @@
         window.applyUnifiedFilters = () => {
             const tipoRegistro = document.getElementById('tipo-registro').value;
             const filtroDescricao = document.getElementById('filtro-descricao').value.toLowerCase();
-            const filtroMinValor = parseFloat(document.getElementById('filtro-min-valor').value) || 0;
-            const filtroMaxValor = parseFloat(document.getElementById('filtro-max-valor').value) || Infinity;
             const filtroData = document.getElementById('filtro-data').value;
             
             let filteredRecords = allRecords;
@@ -183,10 +180,11 @@
 
             filteredRecords = filteredRecords.filter(item => {
                 const descricaoMatch = item.descricao.toLowerCase().includes(filtroDescricao);
-                const valorMatch = item.valor >= filtroMinValor && item.valor <= filtroMaxValor;
-                const dateMatch = !filtroData || new Date(item.created_at).toLocaleDateString().includes(filtroData);
                 
-                return descricaoMatch && valorMatch && dateMatch;
+                // Filtro por data: compara YYYY-MM-DD
+                const dateMatch = !filtroData || item.created_at.split('T')[0] === filtroData;
+                
+                return descricaoMatch && dateMatch;
             });
 
             renderUnifiedTable(sortedItems(filteredRecords));
@@ -337,8 +335,25 @@
 
         function setupFormListeners() {
             document.getElementById('form-dinamico').addEventListener('submit', handleFormSubmit);
+            document.getElementById('valor-dinamico').addEventListener('input', formatValue);
         }
         
+        // Formata o valor como uma moeda
+        function formatValue(event) {
+            let value = event.target.value.replace(/\D/g, ''); // Remove todos os caracteres não numéricos
+            if (value === '') {
+                event.target.value = '';
+                return;
+            }
+            
+            value = parseInt(value, 10);
+            value = (value / 100).toFixed(2);
+            value = value.replace('.', ',');
+            value = value.replace(/(\d)(?=(\d{3})+(?!\d))/g, '$1.');
+            
+            event.target.value = value;
+        }
+
         window.updateDynamicForm = (tipoInsercao) => {
             const form = document.getElementById('form-dinamico');
             const valorInput = document.getElementById('valor-dinamico');
@@ -444,7 +459,7 @@
 
             const descricao = document.getElementById('descricao-dinamico').value;
             const valorInput = document.getElementById('valor-dinamico');
-            const valor = parseFloat(valorInput.value);
+            let valor = parseFloat(valorInput.value.replace(/\./g, '').replace(',', '.')); // Parse the formatted value
             const tipoReceitaSelect = document.getElementById('tipo-receita');
 
             if (collectionName === 'receitas' && tipoReceitaSelect.value === '') {
@@ -537,23 +552,6 @@
             }, 3000);
         }
 
-        // NOVO: Função para alternar entre as visualizações
-        window.toggleView = () => {
-            const formsView = document.getElementById('forms-view');
-            const registrosView = document.getElementById('registros-view');
-            const toggleBtn = document.getElementById('toggle-view-btn');
-
-            if (registrosView.classList.contains('hidden')) {
-                formsView.classList.add('hidden');
-                registrosView.classList.remove('hidden');
-                toggleBtn.textContent = 'Voltar ao Resumo';
-            } else {
-                formsView.classList.remove('hidden');
-                registrosView.classList.add('hidden');
-                toggleBtn.textContent = 'Ver Registros';
-            }
-        };
-
         document.addEventListener('DOMContentLoaded', () => {
             initializeSupabase();
             window.updateDynamicForm('receitas');
@@ -621,14 +619,6 @@
                 </div>
             </div>
 
-            <!-- Botão de Alternância -->
-            <div class="mt-4 text-center">
-                <button id="toggle-view-btn" onclick="toggleView()" class="p-2 rounded-xl bg-gray-200 text-gray-700 font-semibold hover:bg-gray-300 transition-colors">Ver Registros</button>
-            </div>
-        </div>
-
-        <!-- Forms View -->
-        <div id="forms-view" class="">
             <!-- Formulário Dinâmico -->
             <div class="bg-white p-6 rounded-2xl shadow-lg mb-8">
                 <h2 class="text-2xl font-bold text-gray-700 mb-4">Adicionar Item</h2>
@@ -666,18 +656,15 @@
                             <option value="Pix">Pix</option>
                             <option value="Crédito">Crédito</option>
                         </select>
-                        <input type="number" id="valor-dinamico" placeholder="Valor (R$)" step="0.01" required class="p-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-400">
+                        <input type="text" id="valor-dinamico" placeholder="Valor (R$)" required class="p-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-400">
                         <input type="number" id="quantidade-dinamico" placeholder="Quantidade de Cotas" value="1" step="0.01" min="0" required class="hidden p-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-400">
                         <button type="submit" class="p-2 bg-blue-500 text-white rounded-xl font-semibold hover:bg-blue-600 transition-colors">Adicionar</button>
                     </div>
                 </form>
             </div>
-        </div>
 
-        <!-- REGISTROS VIEW (Hidden by default) -->
-        <div id="registros-view" class="hidden">
-            <!-- Tabela de Registros Unificada -->
-            <div class="bg-white p-6 rounded-2xl shadow-lg">
+            <!-- REGISTROS VIEW -->
+            <div id="registros-view" class="bg-white p-6 rounded-2xl shadow-lg">
                 <h2 class="2xl font-bold text-gray-700 mb-4">Registros do Mês</h2>
                 <div id="filter-form-unified" class="bg-gray-50 p-4 rounded-xl mb-4">
                     <p class="font-bold text-sm text-gray-700 mb-2">Filtros:</p>
@@ -689,9 +676,7 @@
                             <option value="investimentos">Investimentos</option>
                         </select>
                         <input type="text" id="filtro-descricao" data-filter="descricao" placeholder="Descrição" class="filter-input p-1 text-sm rounded border" data-collection="unified">
-                        <input type="text" id="filtro-data" data-filter="data" placeholder="dd/mm/aaaa" class="filter-input p-1 text-sm rounded border" data-collection="unified">
-                        <input type="number" id="filtro-min-valor" data-filter="min-valor" placeholder="Valor Mínimo" step="0.01" class="filter-input p-1 text-sm rounded border" data-collection="unified">
-                        <input type="number" id="filtro-max-valor" data-filter="max-valor" placeholder="Valor Máximo" step="0.01" class="filter-input p-1 text-sm rounded border" data-collection="unified">
+                        <input type="date" id="filtro-data" data-filter="data" class="filter-input p-1 text-sm rounded border" data-collection="unified">
                         <button id="reset-unified-filters" class="col-span-2 sm:col-span-3 p-1 bg-gray-200 text-gray-700 rounded-xl hover:bg-gray-300 text-sm">Limpar Filtros</button>
                     </div>
                 </div>
